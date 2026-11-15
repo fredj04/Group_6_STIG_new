@@ -15,9 +15,10 @@ import html
 import os
 import re
 import webbrowser
-import xml.etree.ElementTree as ET
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+
+import main as core  # parsing and STIG -> CCI -> NIST linking live in main.py
 
 # --------------------------------------------------------------------------- #
 # Configuration
@@ -92,91 +93,38 @@ def family_name(code):
     return FAMILIES.get(code, "Unknown family")
 
 
-def load_cci_lookup(path, revision_title):
-    """Return ({cci_id: info}, list_version) from a DISA CCI list XML."""
-    root = ET.parse(path).getroot()
-    lookup = {}
-    for item in root.findall(".//{*}cci_item"):
-        refs = item.findall(".//{*}reference")
-        lookup[item.get("id")] = {
-            "definition": (item.findtext("{*}definition") or "").strip(),
-            "status": (item.findtext("{*}status") or "").strip(),
-            "type": (item.findtext("{*}type") or "").strip(),
-            "nist": [r.get("index").strip() for r in refs
-                     if r.get("title") == revision_title and r.get("index")],
-        }
-    version = (root.findtext("{*}metadata/{*}version") or "").strip()
-    return lookup, version
+def load_documents(cci_path, stig_path, revision):
+    """Run main.py's loaders and add the few display fields the GUI needs."""
+    core.REVISION = f'title="{revision}"'
+    lookup = core.load_cci_lookup(cci_path)
+    rules = core.load_stig(stig_path)
 
+    # main.py reads the raw XML text, so XML escapes like &quot; are still in it
+    for r in rules:
+        for key in ("title", "check", "fix"):
+            r[key] = html.unescape(r[key]).strip()
+        r["discussion"] = html.unescape(html.unescape(r["discussion"])).strip()  # escaped twice in XCCDF
+        r["severity"] = r["severity"].lower()
 
-def _tagged(text, tag):
-    """Pull <Tag>...</Tag> out of an XCCDF description blob."""
-    m = re.search(rf"<{tag}>(.*?)</{tag}>", text or "", re.S)
-    return html.unescape(m.group(1).strip()) if m else ""
+    rows = core.connect(rules, lookup)
+    index = {r["vuln_id"]: i for i, r in enumerate(rules)}
+    for row in rows:
+        row["rule"] = index[row["vuln_id"]]
+        row["cat"] = SEVERITY_CAT.get(row["severity"], row["severity"])
+        row["family"] = row["family"] or NEEDS_REVIEW
+        if row["note"] == "NO REV 5 CODE":
+            row["note"] = "NOT MAPPED"  # main.py's label assumes Rev 5; the GUI also offers Rev 4
+        row["definition"] = html.unescape(lookup.get(row["cci"], {}).get("definition", ""))
 
-
-def load_stig(path):
-    """Return (metadata, rules) from a DISA STIG XCCDF benchmark."""
-    root = ET.parse(path).getroot()
+    cci_text = open(cci_path, encoding="utf-8-sig").read()
+    stig_text = open(stig_path, encoding="utf-8-sig").read()
     meta = {
-        "title": (root.findtext("{*}title") or "").strip(),
-        "version": (root.findtext("{*}version") or "").strip(),
-        "release": "",
-        "status_date": "",
+        "title": html.unescape(core.between(stig_text, "<title>", "</title>")),
+        "version": core.between(stig_text, "<version>", "</version>"),
+        "release": core.between(stig_text, '<plain-text id="release-info">', "</plain-text>"),
     }
-    status = root.find("{*}status")
-    if status is not None:
-        meta["status_date"] = status.get("date", "")
-    for pt in root.findall("{*}plain-text"):
-        if pt.get("id") == "release-info":
-            meta["release"] = (pt.text or "").strip()
-
-    rules = []
-    for group in root.findall(".//{*}Group"):
-        rule = group.find("{*}Rule")
-        if rule is None:
-            continue
-        check = rule.find("{*}check")
-        idents = [(i.text or "").strip() for i in rule.findall("{*}ident")]
-        rules.append({
-            "vuln_id": group.get("id", ""),
-            "rule_id": rule.get("id", ""),
-            "stig_id": (rule.findtext("{*}version") or "").strip(),
-            "severity": rule.get("severity", "").lower(),
-            "title": (rule.findtext("{*}title") or "").strip(),
-            "discussion": _tagged(rule.findtext("{*}description"), "VulnDiscussion"),
-            "check": ((check.findtext("{*}check-content") if check is not None else "") or "").strip(),
-            "fix": (rule.findtext("{*}fixtext") or "").strip(),
-            "ccis": [i for i in idents if i.startswith("CCI-")],
-        })
-    return meta, rules
-
-
-def connect(rules, lookup):
-    """One row per rule / CCI / NIST control. Gaps are flagged in 'note'."""
-    rows = []
-    for idx, r in enumerate(rules):
-        def add(cci, nist, note, definition=""):
-            fam = nist.split("-")[0].strip() if nist else NEEDS_REVIEW
-            rows.append({
-                "rule": idx,
-                "vuln_id": r["vuln_id"], "stig_id": r["stig_id"],
-                "severity": r["severity"], "cat": SEVERITY_CAT.get(r["severity"], r["severity"]),
-                "cci": cci, "nist": nist, "family": fam, "note": note,
-                "title": r["title"], "definition": definition,
-            })
-        if not r["ccis"]:
-            add("", "", "NO CCI")
-        for cci in r["ccis"]:
-            info = lookup.get(cci)
-            if info is None:
-                add(cci, "", "CCI NOT IN LIST")
-            elif not info["nist"]:
-                add(cci, "", "NOT MAPPED", info["definition"])  # CCI has no control in this revision
-            else:
-                for code in info["nist"]:
-                    add(cci, code, "", info["definition"])
-    return rows
+    cci_version = core.between(cci_text, "<version>", "</version>")
+    return meta, rules, rows, cci_version
 
 
 def compute_stats(rules, rows):
@@ -632,16 +580,10 @@ class App(tk.Tk):
         self.load_btn.state(["disabled"])
         self.update_idletasks()
         try:
-            revision = REVISIONS[self.revision.get()]
-            lookup, self.cci_version = load_cci_lookup(cci, revision)
-            self.meta, self.rules = load_stig(stig)
-            self.rows = connect(self.rules, lookup)
-        except ET.ParseError as exc:
-            messagebox.showerror(APP_TITLE, f"Could not parse XML:\n\n{exc}")
-            self.status.set("Load failed.")
-            return
-        except Exception as exc:  # noqa: BLE001 - surface any parse problem to the user
-            messagebox.showerror(APP_TITLE, f"Unexpected error while loading:\n\n{exc}")
+            self.meta, self.rules, self.rows, self.cci_version = load_documents(
+                cci, stig, REVISIONS[self.revision.get()])
+        except Exception as exc:
+            messagebox.showerror(APP_TITLE, f"Could not read the files:\n\n{exc}")
             self.status.set("Load failed.")
             return
         finally:
@@ -662,7 +604,7 @@ class App(tk.Tk):
         self._fill_family_tree()
         self.draw_chart()
         self.apply_filters()
-        self.status.set(f"Loaded {self.stats['rules']} rules and {len(lookup):,} CCIs "
+        self.status.set(f"Loaded {self.stats['rules']} rules "
                         f"(CCI list {self.cci_version}) → {self.stats['rows']:,} mappings "
                         f"against {self.revision.get()}.")
 
