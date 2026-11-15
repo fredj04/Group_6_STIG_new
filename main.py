@@ -5,7 +5,7 @@ from os.path import exists, splitext
 REVISION = 'title="NIST SP 800-53 Revision 5"'
 
 #reads the CCI file and builds a dictionary that maps each CCI number to its definition, status and NIST codes.
-# 1.    text.split(start, 1) cuts the text at the first <status>, giving ['', 'draft</status>'].
+# 1.    text.split(start, 1) cuts the text at the first <status>, giving ['', 'draft</status>']. 
 #       (The 1 cuts at the first match)
 # 2.     [1] keeps the part after the marker: 'draft</status>'.
 # 3.     .split(end, 1)[0] cuts that at </status> and keeps the part before it: 'draft'.
@@ -20,14 +20,14 @@ def load_cci_lookup(path):
         refs = item.split("<reference ")[1:] # further cuts those pieces into one piece per NIST reference
         lookup[between(item, 'id="', '"')] = {
 
-            "definition": between(item, "<definition>", "</definition>"),
+            "definition": between(item, "<definition>", "</definition>"), 
             "status": between(item, "<status>", "</status>"),
             "nist": [between(r, 'index="', '"') for r in refs if REVISION in r],
 
             }
     return lookup #each CCI number now has a NIST code assigned to it in lookup
 
-# reads the STIG file and returns a list of its rules.
+# reads the STIG file and returns a list of its rules. 
 # Each rule is a dictionary with a V-ID, STIG ID, severity, title and CCIs,
 # plus the rule ID, discussion, check text and fix text that the GUI's detail pane shows.
 def load_stig(path):
@@ -49,7 +49,7 @@ def load_stig(path):
         })
     return rules
 
-# links every STIG rule to its NIST controls through its CCIs.
+# links every STIG rule to its NIST controls through its CCIs. 
 # It produces one row per link and marks anything that can’t be linked.
 def connect(rules, lookup):
     rows = []
@@ -59,13 +59,13 @@ def connect(rules, lookup):
             # adds a row with the rule's V-ID, STIG ID and severity, plus the CCI, NIST code and note passed in, and the rule's title
             rows.append({"vuln_id": rule["vuln_id"], "stig_id": rule["stig_id"], "severity": rule["severity"],
                          "cci": cci, "nist": nist, "family": nist[:2], "note": note, "title": rule["title"]})
-
-        if not rule["ccis"]: # checks whether the rule lists no CCIs at all
+         
+        if not rule["ccis"]: # checks whether the rule lists no CCIs at all   
             add("", "", "NO CCI") # if it doesnt, it adds a row with the mark NO CCI with blank CCI and NIST columns
 
         for cci in rule["ccis"]:
             info = lookup.get(cci)
-            if info is None:
+            if info is None: 
                 add(cci, "", "CCI NOT IN LIST") # if the CCI isn't in the lookup dictionary, adds a row flagged CCI NOT IN LIST
             elif not info["nist"]:
                 add(cci, "", "NO REV 5 CODE") # same as above but for NISTs
