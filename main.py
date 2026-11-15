@@ -1,5 +1,32 @@
-LOAD_CCI = r"C:\Users\joshu\OneDrive\Documents\CODING PROJECTS\CSE 484 Project\CCI_List.xml" #Put your CCI list filepath here
-LOAD_STIG = r"C:\Users\joshu\OneDrive\Documents\CODING PROJECTS\CSE 484 Project\U_MS_Windows_11_STIG_V2R11_Manual-xccdf.xml" #Put your STIG filepath here
+from tkinter import Tk
+from tkinter.filedialog import askopenfilename
+from os.path import exists, splitext
+
+Tk().withdraw()  # hides the empty root window so only the file dialogs show
+
+# file pickers instead of hardcoded paths, so the script runs on anyone's machine
+LOAD_CCI = askopenfilename(
+    title="Select CCI List",
+    filetypes=[("XML files", "*.xml")]
+)
+if not LOAD_CCI:
+    raise SystemExit("No CCI list selected.")
+
+LOAD_STIG = askopenfilename(
+    title="Select STIG XCCDF Benchmark",
+    filetypes=[("XML files", "*.xml")]
+)
+if not LOAD_STIG:
+    raise SystemExit("No STIG file selected.")
+
+# the output CSV goes next to the STIG and never overwrites an earlier run:
+# <STIG name>_mapping.csv, then _mapping(1).csv, _mapping(2).csv, ...
+file_name = splitext(LOAD_STIG)[0] + "_mapping"
+OUTPUT = file_name + ".csv"
+counter = 0
+while exists(OUTPUT):
+    counter += 1
+    OUTPUT = f"{file_name}({counter}).csv"
 
 REVISION = 'title="NIST SP 800-53 Revision 5"'
 
@@ -78,7 +105,8 @@ def save_csv(rows, path):
 lookup = load_cci_lookup(LOAD_CCI)
 rules = load_stig(LOAD_STIG)
 rows = connect(rules, lookup)
-save_csv(rows, "output.csv")
+save_csv(rows, OUTPUT)
+print(f"Saved {len(rows)} rows to {OUTPUT}")
 
 
 
