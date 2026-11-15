@@ -1,5 +1,6 @@
-LOAD_CCI = r"C:\Users\joshu\OneDrive\Documents\CODING PROJECTS\CSE 484 Project\CCI_List.xml" #Put your CCI list filepath here
-LOAD_STIG = r"C:\Users\joshu\OneDrive\Documents\CODING PROJECTS\CSE 484 Project\U_MS_Windows_11_STIG_V2R11_Manual-xccdf.xml" #Put your STIG filepath here
+from tkinter import Tk
+from tkinter.filedialog import askopenfilename
+from os.path import exists, splitext
 
 REVISION = 'title="NIST SP 800-53 Revision 5"'
 
@@ -27,7 +28,8 @@ def load_cci_lookup(path):
     return lookup #each CCI number now has a NIST code assigned to it in lookup
 
 # reads the STIG file and returns a list of its rules. 
-# Each rule is a dictionary with a V-ID, STIG ID, severity, title and CCIs.
+# Each rule is a dictionary with a V-ID, STIG ID, severity, title and CCIs,
+# plus the rule ID, discussion, check text and fix text that the GUI's detail pane shows.
 def load_stig(path):
     text = open(path, encoding="utf-8-sig").read() # loads the STIG file into one big string
     rules = []
@@ -36,9 +38,13 @@ def load_stig(path):
         idents = [between(x, ">", "<") for x in rule.split("<ident")[1:]] # Get the text inside every <ident> tag; these hold CCIs and old V-IDs
         rules.append({
             "vuln_id": group.split('"', 1)[0],
+            "rule_id": between(rule, 'id="', '"'), # the SV- rule ID is the first id="" in the <Rule> tag
             "stig_id": between(rule, "<version>", "</version>"),
             "severity": between(rule, 'severity="', '"'),
             "title": between(rule, "<title>", "</title>"),
+            "discussion": between(rule, "&lt;VulnDiscussion&gt;", "&lt;/VulnDiscussion&gt;"), # stored escaped inside <description>
+            "check": between(rule, "<check-content>", "</check-content>"),
+            "fix": between(rule, "<fixtext", "</fixtext>").split(">", 1)[1], # skips the fixref="..." attribute
             "ccis": [i for i in idents if i.startswith("CCI-")],
         })
     return rules
@@ -75,22 +81,36 @@ def save_csv(rows, path):
         for row in rows:
             f.write(",".join('"' + v.replace('"', '""') + '"' for v in row.values()) + "\n")
 
-lookup = load_cci_lookup(LOAD_CCI)
-rules = load_stig(LOAD_STIG)
-rows = connect(rules, lookup)
-save_csv(rows, "output.csv")
+# only runs when main.py is started directly, so the GUI can import the functions above
+if __name__ == "__main__":
+    Tk().withdraw()  # hides the empty root window so only the file dialogs show
 
+    # file pickers instead of hardcoded paths, so the script runs on anyone's machine
+    LOAD_CCI = askopenfilename(
+        title="Select CCI List",
+        filetypes=[("XML files", "*.xml")]
+    )
+    if not LOAD_CCI:
+        raise SystemExit("No CCI list selected.")
 
+    LOAD_STIG = askopenfilename(
+        title="Select STIG XCCDF Benchmark",
+        filetypes=[("XML files", "*.xml")]
+    )
+    if not LOAD_STIG:
+        raise SystemExit("No STIG file selected.")
 
-# #prints the rows in the terminal, grouped by control family, with problem rows in a NEEDS REVIEW group at the end.
-# def display(rows):
-#     groups = {}
-#     for row in rows:
-#         family = row["nist"][:2] if row["nist"] else "NEEDS REVIEW"
-#         groups.setdefault(family, []).append(row)
-#     for family in sorted(groups, key=lambda f: (f == "NEEDS REVIEW", f)):  # NEEDS REVIEW last
-#         print(f"\n=== {family} ({len(groups[family])}) ===")
-#         for row in groups[family]:
-#             print(f"{row['vuln_id']:<10}{row['stig_id']:<17}{row['severity']:<8}{row['cci']:<12}"
-#                   f"{row['nist'] or row['note']:<18}{row['title'][:45]}")
+    # the output CSV goes next to the STIG and never overwrites an earlier run:
+    # <STIG name>_mapping.csv, then _mapping(1).csv, _mapping(2).csv, ...
+    file_name = splitext(LOAD_STIG)[0] + "_mapping"
+    OUTPUT = file_name + ".csv"
+    counter = 0
+    while exists(OUTPUT):
+        counter += 1
+        OUTPUT = f"{file_name}({counter}).csv"
 
+    lookup = load_cci_lookup(LOAD_CCI)
+    rules = load_stig(LOAD_STIG)
+    rows = connect(rules, lookup)
+    save_csv(rows, OUTPUT)
+    print(f"Saved {len(rows)} rows to {OUTPUT}")
