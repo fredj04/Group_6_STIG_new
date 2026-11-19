@@ -14,7 +14,9 @@ import datetime
 import html
 import os
 import re
+import subprocess
 import webbrowser
+from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -29,8 +31,6 @@ TEAM = "Group 6  ·  CSE 484 Network Security"
 VERSION = "1.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_CCI = os.path.join(HERE, "CCI_List.xml")
-DEFAULT_STIG = os.path.join(HERE, "U_MS_Windows_11_STIG_V2R11_Manual-xccdf.xml")
 
 # Label shown in the GUI -> exact "title" attribute used in the CCI list
 REVISIONS = {
@@ -271,6 +271,26 @@ def build_report_html(meta, cci_version, revision, stats, families, rows):
 </main></body></html>"""
 
 
+def open_in_browser(path):
+    """Open a file in the default web browser.
+
+    webbrowser.open() can hand .html files to VS Code when the app is run from VS Code,
+    so on Windows this looks up the default browser for web links and starts it directly.
+    """
+    url = Path(path).resolve().as_uri()
+    try:
+        import winreg
+        choice = r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, choice) as key:
+            browser_id = winreg.QueryValueEx(key, "ProgId")[0]  # e.g. MSEdgeHTM or ChromeHTML
+        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, browser_id + r"\shell\open\command") as key:
+            command = winreg.QueryValueEx(key, "")[0]  # e.g. "C:\...\msedge.exe" --single-argument %1
+        browser = command.split('"')[1] if command.startswith('"') else command.split()[0]
+        subprocess.Popen([browser, url])
+    except (ImportError, OSError, IndexError):
+        webbrowser.open(url)  # not on Windows, or no default browser found
+
+
 # --------------------------------------------------------------------------- #
 # GUI widgets
 # --------------------------------------------------------------------------- #
@@ -318,14 +338,14 @@ class App(tk.Tk):
         self.cci_version, self.stats, self.families = "", {}, []
         self.sort_col, self.sort_rev = None, False
 
-        self.cci_path = tk.StringVar(value=DEFAULT_CCI)
-        self.stig_path = tk.StringVar(value=DEFAULT_STIG)
+        self.cci_path = tk.StringVar()   # empty until the user picks a CCI list
+        self.stig_path = tk.StringVar()  # empty until the user picks a STIG
         self.revision = tk.StringVar(value=next(iter(REVISIONS)))
         self.search = tk.StringVar()
         self.sev_filter = tk.StringVar(value="All severities")
         self.fam_filter = tk.StringVar(value="All families")
         self.review_only = tk.BooleanVar()
-        self.status = tk.StringVar(value="Select source documents and click Load & Map.")
+        self.status = tk.StringVar(value="Choose a CCI list and a STIG with Browse…, then click Load & Map.")
 
         self._style()
         self._build_header()
@@ -338,19 +358,6 @@ class App(tk.Tk):
 
         for v in (self.search, self.sev_filter, self.fam_filter, self.review_only):
             v.trace_add("write", lambda *_: self.apply_filters())
-
-        if os.path.exists(DEFAULT_CCI) and os.path.exists(DEFAULT_STIG):
-            self.after(150, self.load)
-        else:
-            self.after(150, self.select_missing_files)
-
-    def select_missing_files(self):
-        """Ask for any source file that isn't next to the script, then load."""
-        for kind, var in (("cci", self.cci_path), ("stig", self.stig_path)):
-            if not os.path.isfile(var.get()) and not self.browse(kind):
-                self.status.set("Select both source documents, then click Load & Map.")
-                return
-        self.load()
 
     # ---- styling ---------------------------------------------------------- #
     def _style(self):
@@ -572,6 +579,9 @@ class App(tk.Tk):
     def load(self):
         cci, stig = self.cci_path.get().strip(), self.stig_path.get().strip()
         for label, p in (("CCI list", cci), ("STIG benchmark", stig)):
+            if not p:
+                messagebox.showinfo(APP_TITLE, f"Choose a {label} file with Browse… first.")
+                return
             if not os.path.isfile(p):
                 messagebox.showerror(APP_TITLE, f"The {label} file was not found:\n\n{p}")
                 return
@@ -802,7 +812,7 @@ class App(tk.Tk):
             return
         self.status.set(f"Report saved to {path}")
         if messagebox.askyesno(APP_TITLE, "Report saved. Open it in your browser now?"):
-            webbrowser.open("file:///" + os.path.abspath(path).replace("\\", "/"))
+            open_in_browser(path)
 
 
 def main():

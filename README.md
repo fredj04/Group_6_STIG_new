@@ -12,8 +12,9 @@ python stig_mapper_gui.py
 ```
 or double-click `Run STIG Mapper.bat` on Windows.
 
-The app auto-loads `CCI_List.xml` and `U_MS_Windows_11_STIG_V2R11_Manual-xccdf.xml`
-from the same folder. Use **Browse…** to pick other STIGs or CCI lists.
+The app starts empty. Use **Browse…** to choose a CCI list and a STIG benchmark
+(the repo includes `CCI_List.xml` and `U_MS_Windows_11_STIG_V2R11_Manual-xccdf.xml`),
+then click **Load & Map**.
 
 ## Features
 - Summary of rules by severity (CAT I / II / III), unique CCIs, NIST controls, and gaps
